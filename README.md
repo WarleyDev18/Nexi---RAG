@@ -26,6 +26,13 @@ python -m src.main "Esqueci a senha e não consigo entrar" --plano free
 pytest                                                 # testes de filtro, corte e prompt (sem LLM)
 ```
 
+## QA
+
+Suíte de qualidade (recuperação, contrato do JSON, roteamento) e relatório de achados: [docs/QA-RELATORIO.md](docs/QA-RELATORIO.md).
+Skills de QA para o Claude Code em [.claude/skills/](.claude/skills/) (`qa-rag-recuperacao`, `qa-rag-geracao`, `qa-rag-relatorio`).
+`pytest -rxX` roda tudo sem LLM; `python -m qa.avaliar_recuperacao` mede recall@K/MRR; `python -m qa.avaliar_geracao` avalia o LLM real (exige chave).
+Testes `xfail(strict)` = bugs conhecidos: ao corrigir um, o teste falha pedindo para remover a marca.
+
 ## Onde está cada etapa
 
 | Etapa | Arquivo | O que mostra |
