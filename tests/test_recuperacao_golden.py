@@ -107,3 +107,60 @@ def test_reindexar_remove_artigo_que_saiu_da_base():
         assert col.get(ids=["kb-fantasma"])["ids"] == []
     finally:
         col.delete(ids=["kb-fantasma"])
+
+
+# ---- plano: ordem INDEPENDENTE do mapa de produção (o invariante acima compara contra config.RANK_PLANO e,
+# se esse mapa for adulterado, ele passa a concordar com o defeito — a mutação 'enterprise = pro' provou isso) ----
+ORDEM = ["free", "pro", "enterprise"]
+
+
+def _artigos_por_plano():
+    import json
+
+    kb = json.loads(config.KB_PATH.read_text(encoding="utf-8"))
+    return [(a["id"], a["min_plan"], a["title"]) for a in kb if a["status"] == "active"]
+
+
+@pytest.mark.parametrize("plano", ORDEM)
+def test_plano_so_recupera_artigos_do_seu_nivel_ou_inferior(plano):
+    nivel = ORDEM.index(plano)
+    for id_, min_plan, titulo in _artigos_por_plano():
+        achou = id_ in [t.id for t in recuperar(titulo, plano)]
+        if ORDEM.index(min_plan) > nivel:
+            assert not achou, f"{id_} ({min_plan}) apareceu para o plano {plano}"
+        else:
+            assert achou, f"{id_} ({min_plan}) deveria ser recuperável no plano {plano} pelo próprio título"
+
+
+def test_rank_dos_planos_e_estritamente_crescente():
+    r = config.RANK_PLANO
+    assert r["free"] < r["pro"] < r["enterprise"]
+
+
+# ---- fronteira do corte, sem modelo: dublê da coleção devolve distâncias exatas ----
+def test_corte_e_inclusivo_na_fronteira(monkeypatch):
+    import src.recuperar as rec
+
+    class Falsa:
+        def query(self, **kw):
+            return {"ids": [["a", "b", "c"]], "documents": [["A", "B", "C"]],
+                    "distances": [[config.MAX_DISTANCIA, config.MAX_DISTANCIA + 1e-6, config.MAX_DISTANCIA - 1e-6]],
+                    "metadatas": [[{}, {}, {}]]}
+
+    monkeypatch.setattr(rec, "get_colecao", lambda: Falsa())
+    assert [t.id for t in rec.recuperar("x", "free")] == ["a", "c"]  # == corte entra; acima sai
+
+
+def test_recuperar_repassa_top_k_e_filtro_ao_banco(monkeypatch):
+    import src.recuperar as rec
+
+    vistos = {}
+
+    class Falsa:
+        def query(self, **kw):
+            vistos.update(kw)
+            return {"ids": [[]], "documents": [[]], "distances": [[]], "metadatas": [[]]}
+
+    monkeypatch.setattr(rec, "get_colecao", lambda: Falsa())
+    rec.recuperar("x", "pro", top_k=3)
+    assert vistos["n_results"] == 3 and vistos["where"] == rec.montar_filtro("pro") and vistos["query_texts"] == ["x"]

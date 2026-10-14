@@ -1,64 +1,76 @@
 ---
 name: qa-rag-geracao
-description: Testa a geração e o roteamento do microagente RAG de triagem (src/gerar.py, src/main.py) — contrato do JSON, enums, fontes citadas ⊆ recuperadas, escalonamento, promessa de reembolso, prompt injection e falhas do LLM — com LLM falso (grátis, determinístico) e, quando houver chave, com o LLM real. Use ao mexer no prompt (REGRAS), no parsing, no guarda-corpo do main.py, no modelo, ou quando pedirem "testar a resposta", "validar o JSON", "o agente alucina?", "testar prompt injection", "avaliar com a API".
+description: Testa a geração e o roteamento do RAG de triagem (src/gerar.py, src/main.py, src/validar.py) — contrato do JSON, enums, fontes ⊆ recuperadas, escalonamento, promessa de reembolso, número inventado, vazamento do prompt e falhas do LLM — com LLM falso (grátis, determinístico) e, havendo chave, com o LLM real. Use ao mexer no prompt (REGRAS), no parsing, no validador, no guarda-corpo do main.py, no modelo, ou quando pedirem "testar a resposta", "validar o JSON", "o agente alucina?", "avaliar com a API", "a taxa de escalonamento está certa?". Não use para busca (qa-rag-recuperacao) nem para ataques/PII (qa-rag-seguranca).
 ---
 
-# QA da geração e do roteamento (RAG Órbita Desk)
+# QA da geração e do roteamento
 
-Princípio: **prompt não é garantia**. Regra que só existe em `REGRAS` não está testada. A suíte verifica, fora do
+**Princípio: prompt não é garantia.** Regra que só existe em `REGRAS` não está testada. A suíte verifica, FORA do
 LLM, o que `triar()` deixa chegar ao cliente.
 
 ## A propriedade central
 
 > O resultado de `triar` ou vai para `fila_humana`, ou cumpre o contrato inteiro.
 
-Implementada em `src/validar.py` (reexportada por `qa/contrato.py`) e usada em produção por `triar` (`seguro_para_propagar`, `validar_saida`). O contrato exige: JSON objeto; chaves
-`categoria, prioridade, escalar, resposta_sugerida, fontes`; enums do prompt; `escalar` booleano; fontes e citações
-`[kb-xxx]` ⊆ ids realmente recuperados; resposta com fonte quando não escala; ≤ 120 palavras; sem promessa de
-reembolso/desconto/exceção; `destino` coerente com `escalar`.
+Implementada em `src/validar.py` (produção; `qa/contrato.py` só reexporta). Contrato verificado:
+JSON objeto · chaves `categoria, prioridade, escalar, resposta_sugerida, fontes` · enums iguais ao prompt ·
+`escalar` booleano · fontes e citações `[kb-xxx]` ⊆ ids recuperados · sem escalar ⇒ tem fonte e resposta · ≤ 120
+palavras · sem promessa de reembolso/desconto/exceção · sem trechos literais das instruções internas ·
+`destino` coerente com `escalar`. Violação ⇒ `fila_humana`, motivo, resposta vazia, original em `saida_rejeitada`.
 
-## Rodar
+Duas guardas determinísticas existem e DEVEM continuar existindo: (1) **antes** do LLM, sem trechos ⇒ humano sem
+chamar o modelo; (2) **depois**, validação acima. Remover qualquer uma é regressão (a mutação as cobre).
+
+## Comandos
 
 ```bash
-pytest tests/test_contrato_oraculo.py tests/test_triagem_contrato.py -q -rxX     # LLM falso, 0 token
-ANTHROPIC_API_KEY=... python -m qa.avaliar_geracao                              # LLM real, ~35 chamadas
-ANTHROPIC_API_KEY=... python -m qa.avaliar_geracao --so-adversariais --saida out.json
+pytest tests/test_contrato_oraculo.py tests/test_triagem_contrato.py tests/test_fundamentacao.py -q   # LLM falso, 0 token
+ANTHROPIC_API_KEY=... python -m qa.avaliar_geracao --so-adversariais   # ~17 chamadas
+ANTHROPIC_API_KEY=... python -m qa.avaliar_geracao --saida out.json    # ~45 chamadas (golden + adversariais)
 ```
-Sem `ANTHROPIC_API_KEY`, **diga explicitamente que a qualidade das respostas reais não foi medida** — foi assim
-que o README original ficou (limitação 4). Nunca apresente teste com LLM falso como prova de qualidade do modelo.
+Sem `ANTHROPIC_API_KEY`: registre **"qualidade das respostas reais NÃO medida"**. Teste com LLM falso prova o
+pipeline, nunca a qualidade do modelo.
 
-## Como o teste com LLM falso funciona
+## Três lentes da avaliação real (`qa.avaliar_geracao`)
 
-Fixture `llm_falso` (tests/conftest.py) troca o SDK `anthropic` e devolve o que o teste mandar:
-`llm_falso.responder(dict | str | None)`; conta `chamadas`, guarda `prompts` e `kwargs` (modelo, temperatura).
-`saida_valida(**campos)` gera a saída perfeita; **estrague um campo por vez**, para cada caso violar uma regra só.
+| Lente | Pergunta | Rótulo | Gate |
+|---|---|---|---|
+| Contrato | o modelo respeitou o formato e as regras? | `CONT` = violou mas o pipeline conteve | taxa do modelo > 20% ⇒ ajustar prompt |
+| Contrato (pipeline) | alguma violação chegaria ao cliente? | `LEAK` | **> 0 = bug**, exit 1 |
+| Escalonamento | pedido de reembolso/desconto/exceção, sem artigo, fora de escopo, artigo de plano superior escalou? | `SEM-ESCALAR` | **> 0 = bug**, exit 1 |
+| Fundamentação | todo número da resposta existe no ticket ou nas fontes citadas? (`qa/fundamentacao.py`) | `NUM` | **> 0 = investigar**, exit 1 |
 
-Checagem obrigatória ao criar um `xfail`: rode `pytest --runxfail -k <caso> --tb=line` e confirme que a mensagem
-é exatamente a do bug. (Já aconteceu de a saída-base violar outra regra e o xfail passar por motivo errado.)
+O que NENHUMA lente automática vê: tom, correção do conteúdo, resposta plausível mas sem suporte real no artigo
+(citar `[kb-001]` não prova que o artigo sustenta a frase). Amostre 10 rascunhos à mão por rodada e registre.
 
-## Quando o resultado do LLM real violar o contrato
-
-Classifique cada linha de `avaliar_geracao`:
-- `CONT` — o modelo violou, mas `triar` mandou ao humano. Sistema funcionou; registre a taxa do modelo.
-- `LEAK` — violação que chegaria ao cliente, ou crash. **É bug do pipeline**, não do modelo: abra no
-  `docs/QA-RELATORIO.md` e transforme num teste com LLM falso reproduzindo a saída exata (guarde o texto bruto).
-- Avalie à mão, por amostra, o que o oráculo não vê: tom, correção do conteúdo, resposta "plausível mas sem
-  suporte no artigo". Citar `[kb-001]` não prova que o artigo sustenta a frase.
-
-## Checklist por mudança
+## Procedimento por mudança
 
 | Mudou | Conferir |
 |---|---|
-| `REGRAS` (prompt) | `test_enums_do_contrato_batem_com_o_prompt`; reexecute `avaliar_geracao --so-adversariais` |
-| parsing de `gerar()` | saída em cerca de código, texto livre, lista, string, conteúdo vazio, JSON truncado |
-| `main.triar` | fail-open (chave ausente → deve escalar), escalar não booleano, caminho sem trechos |
-| modelo / temperatura | `test_chamada_ao_llm_usa_temperatura_zero...`; rode a bateria real e compare violações |
-| delimitadores do ticket | ticket contendo `</ticket>`, "ignore as regras", pedido de reembolso sob pressão |
+| `REGRAS` (prompt) | `test_enums_do_contrato_batem_com_o_prompt`; `test_regras_nao_crescem_sem_aviso`; reexecute a avaliação real adversarial |
+| parsing de `gerar()` | cerca ```json, texto livre, lista, string, `null`, conteúdo vazio, JSON truncado |
+| `main.triar` / `validar` | fail-open (campo ausente ⇒ humano), tipo errado (`["auth"]`), caminho sem trechos, motivo e `saida_rejeitada` preservados |
+| modelo / temperatura | `test_chamada_ao_llm_usa_temperatura_zero...`; bateria real antes e depois (compare taxa `CONT`) |
+| nova regra de negócio | escreva o teste que a viola ANTES de implementar a guarda; inclua o caso no corpus/`DEVE_ESCALAR` |
+
+## Como estressar com LLM falso
+
+Fixture `llm_falso` (tests/conftest.py): `responder(dict|str|None)`, conta `chamadas`, guarda `prompts` e `kwargs`.
+`saida_valida(**campos)` gera a saída perfeita (cita `kb-001`, ticket de senha): **estrague UM campo por vez**.
+Use o ticket cuja recuperação contém a fonte da saída-base — senão a saída-base já é inválida e o teste passa/falha
+pelo motivo errado (aconteceu na rodada 1). Confira com `pytest --runxfail`.
 
 ## Armadilhas
 
-- Escalar **no lado seguro**: dado faltando, ambíguo ou inválido → `fila_humana`. Nunca `rascunho`.
-- Guarda-corpo que só roda *depois* do LLM não evita o gasto nem a alucinação (foi o BUG-06: sem trechos o modelo ainda era chamado — hoje `triar` curto-circuita).
-- O validador de promessa de reembolso (`src/validar.py`) é uma regex: valide-o nos dois sentidos (`test_oraculo_*`). Resposta cautelosa
-  ("a equipe financeira decide") não pode ser acusada — falso positivo faz o time ignorar o alerta.
-- Dados: tickets reais contêm PII. O golden usa só texto fictício; não cole ticket real em testes ou relatórios.
+- Escalar **sempre para o lado seguro**: dado faltando, ambíguo ou inválido ⇒ `fila_humana`, nunca rascunho.
+- A validação é estrita de propósito (121 palavras escala). Se a taxa de escalonamento do modelo real subir demais,
+  afrouxe a REGRA específica, nunca a guarda inteira.
+- Regex de promessa de reembolso: teste nos DOIS sentidos (`test_oraculo_*`). Falso positivo em resposta cautelosa
+  ("a equipe financeira decide") faz o time ignorar o alerta.
+- Fundamentação numérica fica só na QA (número por extenso, "meia hora", geraria falso positivo em produção).
+- Sem PII em fixtures: use texto fictício. Nunca cole ticket real em teste ou relatório.
+
+## Registrar
+
+Pass/fail por lente, taxa de `CONT` do modelo, lista de `LEAK`/`SEM-ESCALAR`/`NUM` com o ticket e a saída bruta,
+modelo e temperatura usados, e **explicitamente** o que não foi medido.

@@ -59,3 +59,23 @@ def test_escalar_dispensa_fonte_e_resposta():
 def test_invariante_fila_humana_e_sempre_segura():
     assert seguro_para_propagar({"destino": "fila_humana", "escalar": True}, [])
     assert not seguro_para_propagar({"destino": "rascunho_para_revisao", "escalar": False}, [])
+
+
+@pytest.mark.parametrize(
+    "campo, valor, trecho",
+    [
+        ("fontes", "kb-001", "fontes não é lista"),
+        ("resposta_sugerida", 123, "resposta_sugerida não é texto"),
+        ("categoria", ["auth"], "categoria fora do enum"),
+        ("prioridade", {"a": 1}, "prioridade fora do enum"),
+        ("fontes", [["kb-001"]], "fonte citada não foi recuperada"),
+    ],
+)
+def test_oraculo_nao_quebra_com_tipo_errado_e_reprova(campo, valor, trecho):
+    v = validar_saida(saida_valida(**{campo: valor}), IDS)
+    assert any(trecho in x for x in v), v
+
+
+def test_vazamento_do_prompt_e_reprovado():
+    s = saida_valida(resposta_sugerida="Use SOMENTE o CONTEXTO abaixo para afirmar fatos [kb-001].")
+    assert any("vazamento" in v for v in validar_saida(s, IDS))

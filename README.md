@@ -28,10 +28,17 @@ pytest                                                 # testes de filtro, corte
 
 ## QA
 
-Suíte de qualidade (recuperação, contrato do JSON, roteamento) e relatório de achados: [docs/QA-RELATORIO.md](docs/QA-RELATORIO.md).
-Skills de QA para o Claude Code em [.claude/skills/](.claude/skills/) (`qa-rag-recuperacao`, `qa-rag-geracao`, `qa-rag-relatorio`).
-`pytest -rxX` roda tudo sem LLM; `python -m qa.avaliar_recuperacao` mede recall@K/MRR; `python -m qa.avaliar_geracao` avalia o LLM real (exige chave).
-Testes `xfail(strict)` = bugs conhecidos: ao corrigir um, o teste falha pedindo para remover a marca.
+Matriz de risco → teste → status: [docs/MATRIZ-QUALIDADE.md](docs/MATRIZ-QUALIDADE.md) · achados e histórico: [docs/QA-RELATORIO.md](docs/QA-RELATORIO.md).
+Sete skills de QA para o Claude Code em [.claude/skills/](.claude/skills/): `qa-rag-recuperacao`, `-geracao`, `-base-conhecimento`, `-seguranca`, `-robustez-desempenho`, `-eficacia-testes` e o orquestrador `-relatorio`.
+
+```bash
+pip install -r requirements-dev.txt
+pytest -rxX                                    # suíte inteira, sem LLM e sem rede de LLM (LLM falso)
+python -m qa.avaliar_recuperacao               # recall@K, MRR, top-1 no golden set
+python -m qa.mutacao                           # teste de mutação (35 mutantes, ~25 min)
+ANTHROPIC_API_KEY=... python -m qa.avaliar_geracao   # LLM real: contrato, escalonamento, fundamentação (exige chave)
+```
+`xfail(strict)` = limitação conhecida: ao resolver uma, o teste falha pedindo para remover a marca.
 
 ## Onde está cada etapa
 
