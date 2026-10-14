@@ -6,6 +6,7 @@ poder ser propagado no fluxo (fila de atendimento) sem parsing frágil.
 """
 import json
 import os
+import re
 
 from src import config
 from src.recuperar import Trecho
@@ -28,6 +29,15 @@ Responda APENAS com JSON válido neste formato:
  "fontes": ["kb-001"]}"""
 
 
+_TAG_TICKET = re.compile(r"<\s*/?\s*ticket\s*>", re.IGNORECASE)
+
+
+def _neutralizar_delimitador(ticket: str) -> str:
+    """O ticket é DADO: se contiver <ticket>/</ticket>, fecharia o delimitador e o que viesse depois
+    pareceria instrução. Dentro do ticket, os sinais < > dessas tags viram ‹ ›."""
+    return _TAG_TICKET.sub(lambda m: m.group(0).replace("<", "‹").replace(">", "›"), ticket)
+
+
 def montar_prompt(ticket: str, plano: str, trechos: list[Trecho]) -> str:
     if trechos:
         contexto = "\n\n".join(
@@ -40,7 +50,7 @@ def montar_prompt(ticket: str, plano: str, trechos: list[Trecho]) -> str:
         f"{REGRAS}\n\n"
         f"PLANO DO CLIENTE: {plano}\n\n"
         f"CONTEXTO:\n{contexto}\n\n"
-        f"TICKET DO CLIENTE:\n<ticket>\n{ticket}\n</ticket>"
+        f"TICKET DO CLIENTE:\n<ticket>\n{_neutralizar_delimitador(ticket)}\n</ticket>"
     )
 
 
@@ -54,12 +64,16 @@ def gerar(prompt: str) -> dict:
         temperature=0,  # triagem pede consistência, não criatividade
         messages=[{"role": "user", "content": prompt}],
     )
-    texto = resp.content[0].text.strip()
+    # resposta sem bloco de texto (recusa, stop inesperado) => texto vazio => cai no fallback abaixo
+    texto = next((b.text for b in resp.content if getattr(b, "text", None)), "").strip()
     if texto.startswith("```"):  # tolera cerca de código
         texto = texto.strip("`").removeprefix("json").strip()
     try:
-        return json.loads(texto)
+        saida = json.loads(texto)
     except json.JSONDecodeError:
+        saida = None
+    if not isinstance(saida, dict):  # lista, string, número, null também é "fora do formato"
         # Falha de formato nunca vira resposta ao cliente: vai para humano.
         return {"escalar": True, "motivo_escalar": "saída do LLM fora do formato",
                 "resposta_sugerida": "", "fontes": [], "bruto": texto}
+    return saida

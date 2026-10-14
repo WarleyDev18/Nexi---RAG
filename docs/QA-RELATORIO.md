@@ -1,13 +1,34 @@
 # Relatório de QA — Microagente RAG de triagem (Órbita Desk)
 
-**Rodada 1 · 14/10/2026 · commit base `4c64b1e`** · Python 3.13, chromadb + sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`)
+**Rodada 1 · 14/10/2026 · commit base `4c64b1e` · correções no mesmo dia (ver "Status das correções")** · Python 3.13, chromadb + sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`)
 
 ## Veredito
 
-**Não liberar para uso com cliente real** enquanto BUG-01, BUG-02 e BUG-09 estiverem abertos: hoje uma saída
-malformada, com fonte inventada ou prometendo reembolso é roteada como `rascunho_para_revisao` sem nenhuma checagem
-determinística. A etapa de recuperação está saudável (recall@4 = 1,00 no golden) e o desenho "rascunho, não resposta
-automática" mitiga, mas não substitui as guardas.
+**Achado original (antes das correções):** não liberar para cliente real — saída malformada, com fonte inventada ou
+prometendo reembolso era roteada como `rascunho_para_revisao` sem checagem determinística.
+
+**Situação atual:** os 11 bugs foram corrigidos e cobertos por testes de regressão (ver abaixo). Para uso com cliente real
+ainda **falta medir o LLM real** (`python -m qa.avaliar_geracao`, exige chave) e tratar as limitações L1–L4, que são de
+recuperação e continuam abertas.
+
+## Status das correções (14/10/2026)
+
+Todos os 11 bugs abaixo estão **corrigidos**; o `xfail(strict)` de cada um virou teste de regressão normal.
+
+| Bug | Correção |
+|---|---|
+| BUG-01, 02, 03, 09, 10 | `src/validar.py` (antes `qa/contrato.py`) roda em `main.triar` depois do `gerar`. Qualquer violação (chave ausente, enum, fonte/citação que não foi recuperada, >120 palavras, promessa de reembolso/desconto) ⇒ `escalar=True`, `destino=fila_humana`, `motivo_escalar` com o porquê, `resposta_sugerida` vazia e a saída original em `saida_rejeitada` |
+| BUG-04, 05 | `gerar()`: JSON que não é objeto ou resposta sem bloco de texto cai no fallback "fora do formato" (humano) |
+| BUG-06 | `triar` retorna direto para a fila humana quando nada é recuperado: zero chamadas ao LLM |
+| BUG-07 | `indexar()` apaga da coleção os ids que não estão mais no `kb.json` |
+| BUG-08 | `montar_prompt` neutraliza `<ticket>`/`</ticket>` dentro do texto do ticket (vira `‹/ticket›`) |
+| BUG-11 | `montar_filtro` levanta `ValueError` para plano inválido; `recuperar` também para ticket que não é texto |
+
+Ao endurecer o validador surgiu um caso novo, também coberto: valores de tipo errado vindos do LLM
+(`"categoria": ["auth"]`, `fontes: [["kb-001"]]`) quebrariam `in set` com `TypeError`; agora escalam.
+**Efeito colateral a conhecer:** a validação é estrita de propósito — uma resposta boa mas com 121 palavras ou com
+citação de id fora do topK também vai para o humano. Se a taxa de escalonamento do LLM real ficar alta demais, afrouxe
+a regra específica, não a guarda inteira.
 
 ## O que foi e o que NÃO foi medido
 
@@ -22,13 +43,14 @@ automática" mitiga, mas não substitui as guardas.
 
 ## Resultado dos testes
 
-`121 testes: 104 passam · 17 xfail (bugs/limitações conhecidos, estritos) · 0 falhas`. Os 6 testes originais continuam verdes.
+Antes das correções: `121 testes: 104 passam · 17 xfail · 0 falhas`.
+**Depois: `132 testes: 127 passam · 5 xfail (limitações L1–L4 de recuperação) · 0 falhas`.** Os 6 testes originais continuam verdes.
 
 Recuperação (18 casos `ok` com resposta, 5 de fora de escopo): **recall@4 = 1,00 · MRR = 0,94 · top-1 = 0,89 · fora de escopo 5/5**.
 Top-1 falha em 2 casos, ambos com o artigo certo dentro do topK: SLA (kb-015 em 3º, atrás de reembolso e cobrança)
 e ticket em inglês (kb-001 em 2º, atrás de kb-002).
 
-## Bugs abertos (todos reproduzidos em teste `xfail(strict)`)
+## Bugs encontrados (todos corrigidos — tabela mantida como histórico da rodada 1)
 
 | ID | Sev | Título | Teste |
 |---|---|---|---|
@@ -44,7 +66,7 @@ e ticket em inglês (kb-001 em 2º, atrás de kb-002).
 | BUG-10 | Baixa | Resposta com 151 palavras passa (limite de 120 só no prompt) | `...[mais-de-120-palavras]` |
 | BUG-11 | Baixa | Plano desconhecido vaza `KeyError: 'gold'` (`recuperar.py:24`) em vez de erro de validação | `test_plano_invalido_gera_erro_de_validacao` |
 
-**Reprodução rápida de qualquer um:** `pytest --runxfail -k "<trecho do nome>" --tb=short`.
+**Antes das correções**, cada um era reproduzível com `pytest --runxfail -k "<trecho do nome>"`; hoje esses testes passam e guardam contra reabertura.
 
 ### Detalhe dos três críticos
 
@@ -80,7 +102,8 @@ resultado determinístico; `upsert` idempotente; JSON inválido/texto livre vai 
 
 ## Para a próxima rodada
 
+0. (feito) Corrigir BUG-01..11.
 1. Rodar `python -m qa.avaliar_geracao` com chave real e anexar a taxa de violações do modelo (`CONT` × `LEAK`).
 2. Ampliar o golden com tickets reais **anonimizados** (hoje todos são escritos por nós: tendem a ser limpos demais).
-3. Corrigir BUG-01/02/09 primeiro; ao corrigir, o `xfail` estrito falha avisando para remover a marca.
+3. Atacar L1 (sinalizar "há artigo de plano superior"), L2 (quebrar ticket composto) e L3 (reranker/busca híbrida): são os `xfail` que restam.
 4. Medir latência e tokens por ticket (a base cabe em ~2 páginas por artigo; confirmar custo do topK=4).

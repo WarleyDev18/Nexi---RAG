@@ -10,6 +10,11 @@ import json
 
 from src.gerar import gerar, montar_prompt
 from src.recuperar import recuperar
+from src.validar import CATEGORIAS, PRIORIDADES, validar_saida
+
+
+def _valido(valor, conjunto) -> bool:
+    return isinstance(valor, str) and valor in conjunto
 
 
 def triar(ticket: str, plano: str, dry_run: bool = False) -> dict:
@@ -18,13 +23,26 @@ def triar(ticket: str, plano: str, dry_run: bool = False) -> dict:
     if dry_run:
         return {"trechos": [(t.id, round(t.distancia, 3)) for t in trechos], "prompt": prompt}
 
-    resultado = gerar(prompt)
-    # Guarda-corpo determinístico (não depende do LLM): sem contexto => humano.
+    # Guarda-corpo 1 (determinístico, antes do LLM): sem contexto => humano, sem gastar token nem arriscar alucinação.
     if not trechos:
-        resultado["escalar"] = True
-        resultado.setdefault("motivo_escalar", "nenhum artigo relevante recuperado")
+        return {"categoria": "outro", "prioridade": "normal", "escalar": True,
+                "motivo_escalar": "nenhum artigo relevante recuperado", "resposta_sugerida": "",
+                "fontes": [], "destino": "fila_humana"}
+
+    resultado = gerar(prompt)
+    # Guarda-corpo 2 (determinístico, depois do LLM): prompt não é garantia. Saída fora do contrato
+    # (chave ausente, enum, fonte que não foi recuperada, >120 palavras, promessa de reembolso...) nunca
+    # vira rascunho: vai para o humano, que recebe o motivo e a saída original para revisar.
+    violacoes = validar_saida(resultado, [t.id for t in trechos])
+    if violacoes:
+        resultado = {"categoria": resultado["categoria"] if _valido(resultado.get("categoria"), CATEGORIAS) else "outro",
+                     "prioridade": resultado["prioridade"] if _valido(resultado.get("prioridade"), PRIORIDADES) else "normal",
+                     "escalar": True,
+                     "motivo_escalar": resultado["motivo_escalar"] if "bruto" in resultado  # já explicado por gerar()
+                     else "saída do LLM reprovada na validação: " + "; ".join(violacoes),
+                     "resposta_sugerida": "", "fontes": [], "violacoes": violacoes, "saida_rejeitada": resultado}
     # Propagação: em produção, isto iria para a fila humana ou viraria rascunho no helpdesk.
-    resultado["destino"] = "fila_humana" if resultado.get("escalar") else "rascunho_para_revisao"
+    resultado["destino"] = "fila_humana" if resultado["escalar"] else "rascunho_para_revisao"
     return resultado
 
 

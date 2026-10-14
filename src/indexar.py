@@ -60,6 +60,10 @@ def indexar() -> int:
         documents=[d["content"] for d in docs],
         metadatas=[d["metadata"] for d in docs],
     )
+    # upsert só acrescenta: artigo removido do kb.json ficaria recuperável (e citável) para sempre
+    obsoletos = set(colecao.get()["ids"]) - {d["id"] for d in docs}
+    if obsoletos:
+        colecao.delete(ids=sorted(obsoletos))
     return len(docs)
 
 

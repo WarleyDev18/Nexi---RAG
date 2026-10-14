@@ -22,7 +22,7 @@ Interpretação dos resultados do pytest:
 
 ## 2. Severidade (use estes critérios, não intuição)
 
-| Sev | Critério | Exemplos nesta base |
+| Sev | Critério | Exemplos (rodada 1, hoje corrigidos) |
 |---|---|---|
 | Crítica | Conteúdo incorreto/prometido chega ao cliente sem humano; vazamento entre planos | promessa de reembolso (BUG-09), fonte inventada (BUG-02), fail-open (BUG-01) |
 | Alta | O pipeline derruba ou perde ticket | JSON não-objeto / conteúdo vazio (BUG-04/05) |

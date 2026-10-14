@@ -21,11 +21,15 @@ class Trecho:
 def montar_filtro(plano_cliente: str) -> dict:
     """1. status == 'active'           -> nunca recuperar artigo descontinuado
     2. min_plan_rank <= rank(plano)  -> só o que o plano do cliente realmente inclui"""
+    if plano_cliente not in config.RANK_PLANO:
+        raise ValueError(f"plano inválido: {plano_cliente!r} (use {', '.join(config.RANK_PLANO)})")
     rank = config.RANK_PLANO[plano_cliente]
     return {"$and": [{"status": {"$eq": "active"}}, {"min_plan_rank": {"$lte": rank}}]}
 
 
 def recuperar(ticket: str, plano_cliente: str, top_k: int = config.TOP_K) -> list[Trecho]:
+    if not isinstance(ticket, str):
+        raise ValueError(f"ticket deve ser texto, recebi {type(ticket).__name__}")
     res = get_colecao().query(
         query_texts=[ticket],
         n_results=top_k,

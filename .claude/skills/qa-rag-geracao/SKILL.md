@@ -12,7 +12,7 @@ LLM, o que `triar()` deixa chegar ao cliente.
 
 > O resultado de `triar` ou vai para `fila_humana`, ou cumpre o contrato inteiro.
 
-Implementada em `qa/contrato.py` (`seguro_para_propagar`, `validar_saida`). O contrato exige: JSON objeto; chaves
+Implementada em `src/validar.py` (reexportada por `qa/contrato.py`) e usada em produção por `triar` (`seguro_para_propagar`, `validar_saida`). O contrato exige: JSON objeto; chaves
 `categoria, prioridade, escalar, resposta_sugerida, fontes`; enums do prompt; `escalar` booleano; fontes e citações
 `[kb-xxx]` ⊆ ids realmente recuperados; resposta com fonte quando não escala; ≤ 120 palavras; sem promessa de
 reembolso/desconto/exceção; `destino` coerente com `escalar`.
@@ -58,7 +58,7 @@ Classifique cada linha de `avaliar_geracao`:
 ## Armadilhas
 
 - Escalar **no lado seguro**: dado faltando, ambíguo ou inválido → `fila_humana`. Nunca `rascunho`.
-- Guarda-corpo que só roda *depois* do LLM não evita o gasto nem a alucinação (BUG-06: sem trechos o modelo ainda é chamado).
-- O oráculo de promessa de reembolso é uma regex: valide-o nos dois sentidos (`test_oraculo_*`). Resposta cautelosa
+- Guarda-corpo que só roda *depois* do LLM não evita o gasto nem a alucinação (foi o BUG-06: sem trechos o modelo ainda era chamado — hoje `triar` curto-circuita).
+- O validador de promessa de reembolso (`src/validar.py`) é uma regex: valide-o nos dois sentidos (`test_oraculo_*`). Resposta cautelosa
   ("a equipe financeira decide") não pode ser acusada — falso positivo faz o time ignorar o alerta.
 - Dados: tickets reais contêm PII. O golden usa só texto fictício; não cole ticket real em testes ou relatórios.

@@ -96,7 +96,6 @@ def test_indexar_e_idempotente(base_indexada):
     assert get_colecao().count() == antes
 
 
-@pytest.mark.xfail(strict=True, reason="BUG-07: upsert não remove da coleção o artigo apagado do kb.json (resposta pode citar fonte que não existe mais)")
 def test_reindexar_remove_artigo_que_saiu_da_base():
     from src.indexar import get_colecao, indexar
 
